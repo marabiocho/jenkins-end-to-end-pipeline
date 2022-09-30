@@ -71,7 +71,7 @@ pipeline {
       when { expression { true } }
       steps {
         container('git') {
-          git url: 'https://github.com/kunchalavikram1427/spring-petclinic.git',
+          git url: 'https://github.com/marabiocho/spring-petclinic.git',
           branch: 'main'
         }
       }
