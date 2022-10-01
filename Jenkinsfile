@@ -1,3 +1,4 @@
+
 pipeline {
   agent {
     kubernetes {
@@ -58,10 +59,10 @@ pipeline {
   environment{
     NEXUS_VERSION = "nexus3"
     NEXUS_PROTOCOL = "http"
-    NEXUS_URL = "IP:PORT"
+    NEXUS_URL = "143.244.211.161:8081"
     NEXUS_REPOSITORY = "maven-hosted"
-    NEXUS_CREDENTIAL_ID = "CREDS-ID"
-    DOCKERHUB_USERNAME = "USERNAME"
+    NEXUS_CREDENTIAL_ID = "nexus-creds"
+    DOCKERHUB_USERNAME = "kantin10"
     APP_NAME = "spring-petclinic"
     IMAGE_NAME = "${DOCKERHUB_USERNAME}" + "/" + "${APP_NAME}"
     IMAGE_TAG = "${BUILD_NUMBER}"
@@ -75,11 +76,7 @@ pipeline {
           branch: 'main'
         }
       }
-      post {
-        success {
-          sendStatus("Git Checkout","success")
-        }
-      }
+      
     }
     stage('Build SW'){
       when { expression { true } }
@@ -88,18 +85,13 @@ pipeline {
           sh 'mvn -Dmaven.test.failure.ignore=true clean package'
         }
       }
-      post {
-        success {
-          junit '**/target/surefire-reports/*.xml'
-          sendStatus("SW Build","success")
-        }
-      }
+      
     }
     stage('Sonar Scan'){
       when { expression { true } }
       steps{
         container('sonarcli'){
-          withSonarQubeEnv(credentialsId: 'CREDS', installationName: 'SERVER_DETAILS') { 
+          withSonarQubeEnv(credentialsId: 'sonar', installationName: 'sonarserver') { 
             sh '''/opt/sonar-scanner/bin/sonar-scanner \
               -Dsonar.projectKey=petclinic \
               -Dsonar.projectName=petclinic \
@@ -114,14 +106,10 @@ pipeline {
           }
         }
       }
-      post {
-        success {
-          sendStatus("Sonar Scan","success")
-        }
-      }
+      
     }
     stage('Wait for Quality Gate'){
-      when { expression { true } }
+      when { expression { false } }
       steps{
         container('sonarcli'){
           timeout(time: 1, unit: 'HOURS') {
@@ -129,11 +117,7 @@ pipeline {
           }
         }
       }
-      post {
-        success {
-          sendStatus("QG Check","success")
-        }
-      }
+      
     }
     stage('Publish Maven Artifacts to Nexus'){
       when { expression { true } }
@@ -174,110 +158,80 @@ pipeline {
           }
         }
       }
-      post {
-        success {
-          sendStatus("Push to Nexus","success")
-        }
-      }
+      
     }
-    stage('Publish Maven Artifacts using CURL'){
-      when { expression { false } }
-      steps{
-        container('curl') {
-          script {
-            pom = readMavenPom file: "pom.xml";
-            withCredentials([usernamePassword(credentialsId: 'CREDS', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
-              sh "curl -v -u $USER:$PASS --upload-file target/${pom.artifactId}-${pom.version}.${pom.packaging} \
-              http://NEXUS-SERVER-DETAILS/repository/REPO-NAME/org/springframework/samples/${pom.artifactId}/${pom.version}/${pom.artifactId}-${pom.version}.${pom.packaging}"
-            }
-          }
-        }
-      }
-    }
+    
     stage('Build Docker Image'){
       when { expression { true } }
       steps{
         container('docker'){
           sh "docker build -t $IMAGE_NAME:$IMAGE_TAG ."
           sh "docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest"
-          withCredentials([usernamePassword(credentialsId: 'CREDS', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
-             sh "docker login -u $USER -p $PASS"
-             sh "docker push $IMAGE_NAME:$IMAGE_TAG"
-             sh "docker push $IMAGE_NAME:latest"
-          }
-          sh "docker rmi $IMAGE_NAME:$IMAGE_TAG"
-          sh "docker rmi $IMAGE_NAME:latest"
+
         }
-      }
-      post {
-        success {
-          sendStatus("Push to Dockerhub","success")
-        }
+
       }
     }
+
+    stage('Docker push') {
+      when { expression { true } }
+        steps {
+           container('docker'){
+             sh '''
+             docker login -u kantin10 -p Kantin10@
+             docker push $IMAGE_NAME:$IMAGE_TAG
+             docker push $IMAGE_NAME:latest
+          
+             docker rmi $IMAGE_NAME:$IMAGE_TAG
+            docker rmi $IMAGE_NAME:latest
+
+            '''
+        }
+      }
+      
+    }
+
     stage("Deploy to Kubernetes via manifests"){
-      when { expression { false } }
+      when { expression { false} }
       steps{
         container('kubectl-helm-cli'){
-          withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'CONFIG-FILE', namespace: '', serverUrl: '') {
-            sh "kubectl apply -f deployment.yml"
+          withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'k8s', namespace: '', serverUrl: '') {
+            sh '''
+            
+            kubectl apply -f deployment.yml
+            '''
           }
         }
       }
     }
+
     stage("Deploy to Kubernetes via Helm"){
-      when { expression { false } }
-      steps{
-        container('kubectl-helm-cli'){
-          withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'CONFIG-FILE', namespace: '', serverUrl: '') {
-            sh "helm upgrade --install petclinic petclinic-chart/"
-          }
-        }
-      }
-      post {
-        success {
-          sendStatus("Deployment","success")
-        }
-      }
-    }
-    stage("Deploy to Kubernetes via Helm from Nexus"){
       when { expression { true } }
       steps{
         container('kubectl-helm-cli'){
           withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'k8s', namespace: '', serverUrl: '') {
-            sh "helm repo add helm-hosted http://USER:TOKEN@NEXUS-SERVER/repository/HELM-REPO/"
-            sh "helm repo update"
-            sh "helm upgrade --install test helm-hosted/petclinic-chart"
+            sh "helm upgrade --install petclinic petclinic-chart/"
           }
         }
       }
-      post {
-        success {
-          sendStatus("Deployment","success")
-        }
-      }
+      
     }
+
   }
-  post {
+
+post {
     failure {
-      mail to: 'vikram@gmail.com',
+      mail to: 'kantinstephanetongue@gmail.com',
       from: 'jenkinsadmin@gmail.com',
       subject: "Jenkins pipeline has failed for job ${env.JOB_NAME}",
       body: "Check build logs at ${env.BUILD_URL}"
     }
     success {
-      mail to: 'vikram@gmail.com',
+      mail to: 'kantinstephanetongue@gmail.com',
       from: 'jenkinsadmin@gmail.com',
       subject: "Jenkins pipeline for job ${env.JOB_NAME} is completed successfully",
       body: "Check build logs at ${env.BUILD_URL}"
     }
   }
-}       
 
-void sendStatus(String stage, String status) {
-    container('curl') {
-        withCredentials([string(credentialsId: 'TOKEN-CREDS-NAME', variable: 'TOKEN')]) {
-            sh "curl -u USER-NAME:$TOKEN -X POST 'https://api.github.com/repos/kunchalavikram1427/spring-petclinic/statuses/$SHA_ID' -H 'Accept: application/vnd.github.v3+json' -d '{\"state\": \"$status\",\"context\": \"$stage\", \"description\": \"Jenkins\", \"target_url\": \"$JENKINS_URL/job/$JOB_NAME/$BUILD_NUMBER/console\"}' "
-        }
-    }
 }
